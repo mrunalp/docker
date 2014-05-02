@@ -5,6 +5,7 @@ package nsinit
 import (
 	"os"
 	"os/exec"
+	"log"
 	"syscall"
 
 	"github.com/dotcloud/docker/pkg/cgroups"
@@ -23,6 +24,8 @@ func Exec(container *libcontainer.Container, term Terminal, rootfs, dataPath str
 		console string
 		err     error
 	)
+
+	log := log.New(os.Stdout, "NSEXEC: ", 0)
 
 	// create a pipe so that we can syncronize with the namespaced process and
 	// pass the veth name to the child
@@ -45,6 +48,7 @@ func Exec(container *libcontainer.Container, term Terminal, rootfs, dataPath str
 	}
 	defer term.Close()
 
+	log.Println("Starting command:", command.Path, " ", command.Args)
 	if err := command.Start(); err != nil {
 		return -1, err
 	}

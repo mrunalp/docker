@@ -5,9 +5,11 @@ package nsinit
 import (
 	"fmt"
 	"os"
+	"log"
 	"runtime"
 	"strings"
 	"syscall"
+	"io/ioutil"
 
 	"github.com/dotcloud/docker/pkg/apparmor"
 	"github.com/dotcloud/docker/pkg/label"
@@ -24,6 +26,7 @@ import (
 // Init is the init process that first runs inside a new namespace to setup mounts, users, networking,
 // and other options required for the new container.
 func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, syncPipe *SyncPipe, args []string) error {
+
 	rootfs, err := utils.ResolveRootfs(uncleanRootfs)
 	if err != nil {
 		return err
@@ -68,19 +71,84 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 	if err := system.Sethostname(container.Hostname); err != nil {
 		return fmt.Errorf("sethostname %s", err)
 	}
+
+/*
 	if err := FinalizeNamespace(container); err != nil {
 		return fmt.Errorf("finalize namespace %s", err)
 	}
+*/
 
+	logFile, err := os.OpenFile("/tmp/nsinit.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return nil
+	}
+	log := log.New(logFile, "NSINIT: ", log.Ldate|log.Ltime)
 	runtime.LockOSThread()
 
+	log.Println("After finalizing namespace.")
 	if err := apparmor.ApplyProfile(os.Getpid(), container.Context["apparmor_profile"]); err != nil {
 		return err
 	}
+
+/*
 	if err := label.SetProcessLabel(container.Context["process_label"]); err != nil {
 		return fmt.Errorf("set process label %s", err)
 	}
-	return system.Execv(args[0], args[0:], container.Env)
+*/
+
+	log.Printf("Executing command %v. UID: %v, PID: %v\n", args, os.Getuid(), os.Getpid())
+	sPipe, err := NewSyncPipe()
+	if err != nil {
+		return err
+	}
+
+	syscall.ForkLock.Lock()
+	pid, r2, err1 := syscall.RawSyscall6(syscall.SYS_CLONE, uintptr(syscall.SIGCHLD|syscall.CLONE_NEWUSER), 0, 0, 0, 0, 0)
+	syscall.ForkLock.Unlock()
+
+	if pid != 0 {
+		log.Printf("pid: %v, r2: %v, err1: %v", pid, r2, err1)
+		log.Println("In parent", os.Getpid(), os.Getuid())
+
+		// Write uid/gid maps for child
+		uid_map_path := fmt.Sprintf("/proc/%v/uid_map", pid)
+		gid_map_path := fmt.Sprintf("/proc/%v/gid_map", pid)
+
+		mapping := "1017 0 1"
+
+		err = ioutil.WriteFile(uid_map_path, []byte(mapping), 0644)
+		if err != nil {
+			log.Println("Failed to write uid_mapping")
+		}
+		err = ioutil.WriteFile(gid_map_path, []byte(mapping), 0644)
+		if err != nil {
+			log.Println("Failed to write gid_mapping")
+		}
+		sPipe.Close()
+
+		log.Println("Wait for child to exit")
+		var wstat syscall.WaitStatus
+		_, err := syscall.Wait4(int(pid), &wstat, 0, nil)
+		if err != nil {
+			log.Println("Failed to wait for child", err)
+			os.Exit(1)
+		}
+
+
+		log.Printf("Status: %v", wstat.ExitStatus())
+
+		log.Println("Ready to exit.")
+		os.Exit(wstat.ExitStatus())
+		return nil
+	} else {
+		log.Printf("pid: %v, r2: %v, err1: %v", pid, r2, err1)
+		log.Println("In child", os.Getpid(), os.Getuid())
+		log.Printf("PATH: %v", container.Env)
+		sPipe.Close()
+		return syscall.Exec(args[0], args[0:], container.Env)
+	}
+
+	return nil
 }
 
 // SetupUser changes the groups, gid, and uid for the user inside the container

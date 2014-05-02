@@ -56,7 +56,17 @@ func SysInit() {
 		Root:       *root,
 	}
 
+	logFile, err := os.OpenFile("/tmp/sysinit.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalln("Failed to open log file", err)
+	}
+
+	logF := log.New(logFile, "SYSINIT: ", log.Ldate|log.Ltime|log.Lshortfile)
+
+	logF.Println("Executing ", args)
+
 	if err := executeProgram(args); err != nil {
+		logF.Println(err)
 		log.Fatal(err)
 	}
 }
