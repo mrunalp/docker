@@ -4,6 +4,8 @@ package nsinit
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
 	"os"
 	"runtime"
 	"strings"
@@ -15,7 +17,7 @@ import (
 	"github.com/dotcloud/docker/pkg/libcontainer/console"
 	"github.com/dotcloud/docker/pkg/libcontainer/mount"
 	"github.com/dotcloud/docker/pkg/libcontainer/network"
-	"github.com/dotcloud/docker/pkg/libcontainer/security/capabilities"
+	//"github.com/dotcloud/docker/pkg/libcontainer/security/capabilities"
 	"github.com/dotcloud/docker/pkg/libcontainer/security/restrict"
 	"github.com/dotcloud/docker/pkg/libcontainer/utils"
 	"github.com/dotcloud/docker/pkg/system"
@@ -72,6 +74,11 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		}
 	}
 
+	logFile, err := os.OpenFile("/tmp/nsinit.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return nil
+	}
+	log := log.New(logFile, "NSINIT: ", log.Ldate|log.Ltime)
 	runtime.LockOSThread()
 
 	if err := apparmor.ApplyProfile(container.Context["apparmor_profile"]); err != nil {
@@ -81,7 +88,7 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		return fmt.Errorf("set process label %s", err)
 	}
 	if container.Context["restrictions"] != "" {
-		if err := restrict.Restrict("proc", "sys"); err != nil {
+		if err := restrict.Restrict("sys"); err != nil {
 			return err
 		}
 	}
@@ -101,7 +108,57 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		return fmt.Errorf("restore parent death signal %s", err)
 	}
 
-	return system.Execv(args[0], args[0:], container.Env)
+	sPipe, err := NewSyncPipe()
+	if err != nil {
+		return err
+	}
+
+	syscall.ForkLock.Lock()
+	pid, r2, err1 := syscall.RawSyscall6(syscall.SYS_CLONE, uintptr(syscall.SIGCHLD|syscall.CLONE_NEWUSER), 0, 0, 0, 0, 0)
+	syscall.ForkLock.Unlock()
+
+	if pid != 0 {
+		// In parent
+		// Write uid/gid maps for child
+		uid_map_path := fmt.Sprintf("/proc/%v/uid_map", pid)
+		gid_map_path := fmt.Sprintf("/proc/%v/gid_map", pid)
+
+		mapping := "1017 0 1"
+
+		err = ioutil.WriteFile(uid_map_path, []byte(mapping), 0644)
+		if err != nil {
+			log.Println("Failed to write uid_mapping")
+		}
+		err = ioutil.WriteFile(gid_map_path, []byte(mapping), 0644)
+		if err != nil {
+			log.Println("Failed to write gid_mapping")
+		}
+		sPipe.Close()
+
+		log.Println("Wait for child to exit")
+		var wstat syscall.WaitStatus
+		_, err := syscall.Wait4(int(pid), &wstat, 0, nil)
+		if err != nil {
+			log.Println("Failed to wait for child", err)
+			os.Exit(1)
+		}
+
+		log.Printf("Status: %v", wstat.ExitStatus())
+
+		log.Println("Ready to exit.")
+		os.Exit(wstat.ExitStatus())
+		return nil
+	} else {
+		// In child
+		log.Printf("pid: %v, r2: %v, err1: %v", pid, r2, err1)
+		log.Println("In child", os.Getpid(), os.Getuid())
+		log.Printf("PATH: %v", container.Env)
+		sPipe.Close()
+
+		return syscall.Exec(args[0], args[0:], container.Env)
+	}
+
+	return nil
 }
 
 // RestoreParentDeathSignal sets the parent death signal to old.
@@ -172,9 +229,11 @@ func setupNetwork(container *libcontainer.Container, context libcontainer.Contex
 // and working dir, and closes any leaky file descriptors
 // before execing the command inside the namespace
 func FinalizeNamespace(container *libcontainer.Container) error {
-	if err := capabilities.DropCapabilities(container); err != nil {
-		return fmt.Errorf("drop capabilities %s", err)
-	}
+	/*
+		if err := capabilities.DropCapabilities(container); err != nil {
+			return fmt.Errorf("drop capabilities %s", err)
+		}
+	*/
 	if err := system.CloseFdsFrom(3); err != nil {
 		return fmt.Errorf("close open file descriptors %s", err)
 	}
