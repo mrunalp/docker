@@ -66,6 +66,25 @@ type Container struct {
 
 	// The device nodes that should be automatically created within the container upon container start.  Note, make sure that the node is marked as allowed in the cgroup as well!
 	DeviceNodes []*devices.Device `json:"device_nodes,omitempty"`
+	// RequiredDeviceNodes are a list of device nodes that will be mknod into the container's rootfs at /dev
+	// If the host system does not support the device that the container requests an error is returned
+	RequiredDeviceNodes []string `json:"required_device_nodes,omitempty"`
+
+	// OptionalDeviceNodes are a list of device nodes that will be mknod into the container's rootfs at /dev
+	// If the host system does not support the device that the container requests the error is ignored
+	OptionalDeviceNodes []string `json:"optional_device_nodes,omitempty"`
+
+	// UserNsUid specifies the uid to run as when user namespace mappings are specified
+	UserNsUid uint32 `json:"userns_uid,omitempty"`
+
+	// UserNsGid specifies the gid to run as when user namespace mappings are specified
+	UserNsGid uint32 `json:"userns_gid,omitempty"`
+
+	// UidMappings is a string array of uid mappings for user namespaces
+	UidMappings []UidMap `json:"uid_mappings,omitempty"`
+
+	// GidMappings is a string array of gid mappings for user namespaces
+	GidMappings []UidMap `json:"gid_mappings,omitempty"`
 }
 
 // Network defines configuration for a container's networking stack
@@ -110,4 +129,11 @@ type Route struct {
 
 	// The device to set this route up for, for example: eth0
 	InterfaceName string `json:"interface_name,omitempty"`
+}
+
+// This represents a UidMapping/GidMapping for User Namespaces.
+type UidMap struct {
+	HostUid      uint32 `json:"host_uid,omitempty"`
+	ContainerUid uint32 `json:"container_uid,omitempty"`
+	Size         uint32 `json:"size,omitempty"`
 }

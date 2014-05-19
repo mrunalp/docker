@@ -126,7 +126,18 @@ func (d *driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 
 		// set this to nil so that when we set the clone flags anything else is reset
 		c.SysProcAttr = nil
+		userNsEnabled := container.Namespaces["NEWUSER"]
+
+		// We temporarily disable the flag as we can't clone into the new user namespace
+		// alongwith the other namespaces.
+		if userNsEnabled {
+			container.Namespaces["NEWUSER"] = false
+		}
 		system.SetCloneFlags(&c.Cmd, uintptr(namespaces.GetNamespaceFlags(container.Namespaces)))
+		// Enable it back for use in libcontainer.
+		if userNsEnabled {
+			container.Namespaces["NEWUSER"] = true
+		}
 		c.ExtraFiles = []*os.File{child}
 
 		c.Env = container.Env
