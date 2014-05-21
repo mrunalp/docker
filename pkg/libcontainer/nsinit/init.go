@@ -110,7 +110,7 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		return fmt.Errorf("restore parent death signal %s", err)
 	}
 
-	// Retain capabilities on clone
+	// Retain capabilities on clone.
 	// TODO use the correct header file.
 	secbit_keep_caps := 4
 	secbit_no_setuid_fixup := 2
@@ -118,13 +118,17 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		return fmt.Errorf("prctl %s", err)
 	}
 
-	// Switch to the docker-root user
-	if err := system.Setuid(1017); err != nil {
+	// TODO: Pass the uid/gid from the caller.
+	dockerRootUid := 1017
+	dockerRootGid := 1017
+
+	// Switch to the docker-root user.
+	if err := system.Setuid(dockerRootUid); err != nil {
 		return fmt.Errorf("setuid %s", err)
 	}
 
-	// Switch to the docker-root group
-	if err := system.Setgid(1017); err != nil {
+	// Switch to the docker-root group.
+	if err := system.Setgid(dockerRootGid); err != nil {
 		return fmt.Errorf("setgid %s", err)
 	}
 
@@ -133,51 +137,52 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		return err
 	}
 
-	syscall.ForkLock.Lock()
-	pid, r2, err1 := syscall.RawSyscall6(syscall.SYS_CLONE, uintptr(syscall.SIGCHLD|syscall.CLONE_NEWUSER), 0, 0, 0, 0, 0)
-	syscall.ForkLock.Unlock()
-
-	if pid != 0 {
-		// In parent
-		// Write uid/gid maps for child
-		uid_map_path := fmt.Sprintf("/proc/%v/uid_map", pid)
-		gid_map_path := fmt.Sprintf("/proc/%v/gid_map", pid)
-
-		mapping := "0 1017 1"
-
-		err = ioutil.WriteFile(uid_map_path, []byte(mapping), 0644)
-		if err != nil {
-			log.Println("Failed to write uid_mapping")
-		}
-		err = ioutil.WriteFile(gid_map_path, []byte(mapping), 0644)
-		if err != nil {
-			log.Println("Failed to write gid_mapping")
-		}
-		sPipe.Close()
-
-		log.Println("Wait for child to exit")
-		var wstat syscall.WaitStatus
-		_, err := syscall.Wait4(int(pid), &wstat, 0, nil)
-		if err != nil {
-			log.Println("Failed to wait for child", err)
-			os.Exit(1)
-		}
-
-		log.Printf("Status: %v", wstat.ExitStatus())
-
-		log.Println("Ready to exit.")
-		os.Exit(wstat.ExitStatus())
-		return nil
-	} else {
-		// In child
-		log.Printf("pid: %v, r2: %v, err1: %v", pid, r2, err1)
-		log.Println("In child", os.Getpid(), os.Getuid())
-		log.Printf("PATH: %v", container.Env)
-		sPipe.Close()
-
-		return syscall.Exec(args[0], args[0:], container.Env)
+	pid, err := system.Clone(uintptr(syscall.CLONE_NEWUSER | syscall.CLONE_FILES | syscall.SIGCHLD))
+	if err != nil {
+		return fmt.Errorf("userns clone: %s", err)
 	}
 
+	if pid != 0 {
+		// In parent.
+		log.Println("In parent.")
+		proc, err := os.FindProcess(pid)
+		if err != nil {
+			return err
+		}
+
+		mappings := fmt.Sprintf("0 %v 1", dockerRootUid)
+		if err = writeUserMappings(pid, mappings); err != nil {
+			proc.Kill()
+			return fmt.Errorf("Failed to write mappings: %s", err)
+		}
+		sPipe.Close()
+
+		state, err := proc.Wait()
+		if err != nil {
+			proc.Kill()
+			return fmt.Errorf("wait: %s", err)
+		}
+
+		os.Exit(state.Sys().(syscall.WaitStatus).ExitStatus())
+	}
+
+	// In child.
+	log.Println("In child.")
+	sPipe.Close()
+
+	return syscall.Exec(args[0], args[0:], container.Env)
+}
+
+// Write UID/GID mappings for a process.
+func writeUserMappings(pid int, mappings string) error {
+	for _, p := range []string{
+		fmt.Sprintf("/proc/%v/uid_map", pid),
+		fmt.Sprintf("/proc/%v/gid_map", pid),
+	} {
+		if err := ioutil.WriteFile(p, []byte(mappings), 0644); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
