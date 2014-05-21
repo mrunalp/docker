@@ -98,14 +98,34 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		return fmt.Errorf("get parent death signal %s", err)
 	}
 
-	if err := FinalizeNamespace(container); err != nil {
-		return fmt.Errorf("finalize namespace %s", err)
-	}
+	/*
+		if err := FinalizeNamespace(container); err != nil {
+			return fmt.Errorf("finalize namespace %s", err)
+		}
+	*/
 
 	// FinalizeNamespace can change user/group which clears the parent death
 	// signal, so we restore it here.
 	if err := RestoreParentDeathSignal(pdeathSignal); err != nil {
 		return fmt.Errorf("restore parent death signal %s", err)
+	}
+
+	// Retain capabilities on clone
+	// TODO use the correct header file.
+	secbit_keep_caps := 4
+	secbit_no_setuid_fixup := 2
+	if err := system.Prctl(syscall.PR_SET_SECUREBITS, uintptr(secbit_keep_caps|secbit_no_setuid_fixup), 0, 0, 0); err != nil {
+		return fmt.Errorf("prctl %s", err)
+	}
+
+	// Switch to the docker-root user
+	if err := system.Setuid(1017); err != nil {
+		return fmt.Errorf("setuid %s", err)
+	}
+
+	// Switch to the docker-root group
+	if err := system.Setgid(1017); err != nil {
+		return fmt.Errorf("setgid %s", err)
 	}
 
 	sPipe, err := NewSyncPipe()
@@ -123,7 +143,7 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		uid_map_path := fmt.Sprintf("/proc/%v/uid_map", pid)
 		gid_map_path := fmt.Sprintf("/proc/%v/gid_map", pid)
 
-		mapping := "1017 0 1"
+		mapping := "0 1017 1"
 
 		err = ioutil.WriteFile(uid_map_path, []byte(mapping), 0644)
 		if err != nil {
