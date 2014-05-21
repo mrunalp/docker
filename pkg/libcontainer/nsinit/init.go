@@ -2,6 +2,11 @@
 
 package nsinit
 
+/*
+#include <linux/securebits.h>
+*/
+import "C"
+
 import (
 	"fmt"
 	"io/ioutil"
@@ -17,7 +22,7 @@ import (
 	"github.com/dotcloud/docker/pkg/libcontainer/console"
 	"github.com/dotcloud/docker/pkg/libcontainer/mount"
 	"github.com/dotcloud/docker/pkg/libcontainer/network"
-	//"github.com/dotcloud/docker/pkg/libcontainer/security/capabilities"
+	"github.com/dotcloud/docker/pkg/libcontainer/security/capabilities"
 	"github.com/dotcloud/docker/pkg/libcontainer/security/restrict"
 	"github.com/dotcloud/docker/pkg/libcontainer/utils"
 	"github.com/dotcloud/docker/pkg/system"
@@ -111,10 +116,7 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 	}
 
 	// Retain capabilities on clone.
-	// TODO use the correct header file.
-	secbit_keep_caps := 4
-	secbit_no_setuid_fixup := 2
-	if err := system.Prctl(syscall.PR_SET_SECUREBITS, uintptr(secbit_keep_caps|secbit_no_setuid_fixup), 0, 0, 0); err != nil {
+	if err := system.Prctl(syscall.PR_SET_SECUREBITS, uintptr(C.SECBIT_KEEP_CAPS|C.SECBIT_NO_SETUID_FIXUP), 0, 0, 0); err != nil {
 		return fmt.Errorf("prctl %s", err)
 	}
 
@@ -254,11 +256,9 @@ func setupNetwork(container *libcontainer.Container, context libcontainer.Contex
 // and working dir, and closes any leaky file descriptors
 // before execing the command inside the namespace
 func FinalizeNamespace(container *libcontainer.Container) error {
-	/*
-		if err := capabilities.DropCapabilities(container); err != nil {
-			return fmt.Errorf("drop capabilities %s", err)
-		}
-	*/
+	if err := capabilities.DropCapabilities(container); err != nil {
+		return fmt.Errorf("drop capabilities %s", err)
+	}
 	if err := system.CloseFdsFrom(3); err != nil {
 		return fmt.Errorf("close open file descriptors %s", err)
 	}
