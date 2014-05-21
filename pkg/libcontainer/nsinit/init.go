@@ -70,6 +70,24 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 
 	label.Init()
 
+	// TODO: Remove logs added temporarily for debugging.
+	logFile, err := os.OpenFile("/tmp/nsinit.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		return nil
+	}
+	log := log.New(logFile, "NSINIT: ", log.Ldate|log.Ltime)
+
+	// Get the uid/gid of the docker-root user on the host.
+	uid, gid, _, err := user.GetUserGroupSupplementary("docker-root", syscall.Getuid(), syscall.Getgid())
+	if err != nil {
+		return fmt.Errorf("get supplementary groups %s", err)
+	}
+
+	dockerRootUid := int(uid)
+	dockerRootGid := int(gid)
+
+	log.Printf("docker uid/gid: %v/%v", dockerRootUid, dockerRootGid)
+
 	if err := mount.InitializeMountNamespace(rootfs, consolePath, container); err != nil {
 		return fmt.Errorf("setup mount namespace %s", err)
 	}
@@ -79,11 +97,6 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		}
 	}
 
-	logFile, err := os.OpenFile("/tmp/nsinit.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		return nil
-	}
-	log := log.New(logFile, "NSINIT: ", log.Ldate|log.Ltime)
 	runtime.LockOSThread()
 
 	if err := apparmor.ApplyProfile(container.Context["apparmor_profile"]); err != nil {
@@ -109,20 +122,10 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		}
 	*/
 
-	// FinalizeNamespace can change user/group which clears the parent death
-	// signal, so we restore it here.
-	if err := RestoreParentDeathSignal(pdeathSignal); err != nil {
-		return fmt.Errorf("restore parent death signal %s", err)
-	}
-
 	// Retain capabilities on clone.
 	if err := system.Prctl(syscall.PR_SET_SECUREBITS, uintptr(C.SECBIT_KEEP_CAPS|C.SECBIT_NO_SETUID_FIXUP), 0, 0, 0); err != nil {
 		return fmt.Errorf("prctl %s", err)
 	}
-
-	// TODO: Pass the uid/gid from the caller.
-	dockerRootUid := 1017
-	dockerRootGid := 1017
 
 	// Switch to the docker-root user.
 	if err := system.Setuid(dockerRootUid); err != nil {
@@ -132,6 +135,12 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 	// Switch to the docker-root group.
 	if err := system.Setgid(dockerRootGid); err != nil {
 		return fmt.Errorf("setgid %s", err)
+	}
+
+	// Changing user/group clears the parent death
+	// signal, so we restore it here.
+	if err := RestoreParentDeathSignal(pdeathSignal); err != nil {
+		return fmt.Errorf("restore parent death signal %s", err)
 	}
 
 	sPipe, err := NewSyncPipe()
