@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"github.com/dotcloud/docker/pkg/apparmor"
 	"github.com/dotcloud/docker/pkg/label"
@@ -148,21 +149,43 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 		return err
 	}
 
-	pid, err := system.Clone(uintptr(syscall.CLONE_NEWUSER | syscall.CLONE_FILES | syscall.SIGCHLD))
+	// Prepare arguments for the raw syscalls.
+	var (
+		r1 uintptr
+		err1 syscall.Errno
+	)
+
+	argv0p, err := syscall.BytePtrFromString(args[0])
 	if err != nil {
+		return err
+	}
+
+	argvp, err := syscall.SlicePtrFromStrings(args[0:])
+	if err != nil {
+		return err
+	}
+
+	envvp, err := syscall.SlicePtrFromStrings(container.Env)
+	if err != nil {
+		return err
+	}
+
+	syscall.ForkLock.Lock()
+	r1, _, err1 = syscall.RawSyscall6(syscall.SYS_CLONE, uintptr(syscall.CLONE_NEWUSER | syscall.CLONE_FILES | syscall.SIGCHLD), 0, 0, 0, 0, 0)
+	if err1 != 0 {
 		return fmt.Errorf("userns clone: %s", err)
 	}
 
-	if pid != 0 {
+	if r1 != 0 {
 		// In parent.
-		log.Println("In parent.")
-		proc, err := os.FindProcess(pid)
+		syscall.ForkLock.Unlock()
+		proc, err := os.FindProcess(int(r1))
 		if err != nil {
 			return err
 		}
 
 		mappings := fmt.Sprintf("0 %v 1", dockerRootUid)
-		if err = writeUserMappings(pid, mappings); err != nil {
+		if err = writeUserMappings(int(r1), mappings); err != nil {
 			proc.Kill()
 			return fmt.Errorf("Failed to write mappings: %s", err)
 		}
@@ -173,15 +196,16 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 			proc.Kill()
 			return fmt.Errorf("wait: %s", err)
 		}
-
 		os.Exit(state.Sys().(syscall.WaitStatus).ExitStatus())
 	}
 
 	// In child.
-	log.Println("In child.")
-	sPipe.Close()
+	_, _, err1 = syscall.RawSyscall(syscall.SYS_EXECVE,
+		uintptr(unsafe.Pointer(argv0p)),
+		uintptr(unsafe.Pointer(&argvp[0])),
+		uintptr(unsafe.Pointer(&envvp[0])))
 
-	return syscall.Exec(args[0], args[0:], container.Env)
+	return nil
 }
 
 // Write UID/GID mappings for a process.
