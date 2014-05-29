@@ -82,16 +82,9 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 	}
 	log := log.New(logFile, "NSINIT: ", log.Ldate|log.Ltime)
 
-	// Get the uid/gid of the docker-root user on the host.
-	uid, gid, _, err := user.GetUserGroupSupplementary("docker-root", syscall.Getuid(), syscall.Getgid())
-	if err != nil {
-		return fmt.Errorf("get supplementary groups %s", err)
-	}
-
-	dockerRootUid := int(uid)
-	dockerRootGid := int(gid)
-
-	log.Printf("docker uid/gid: %v/%v", dockerRootUid, dockerRootGid)
+	log.Printf("MapDockerRoot: %v", container.MapDockerRoot)
+	log.Printf("DockerRootUid: %v", container.DockerRootUid)
+	log.Printf("DockerRootGid: %v", container.DockerRootGid)
 
 	if err := mount.InitializeMountNamespace(rootfs, consolePath, container); err != nil {
 		return fmt.Errorf("setup mount namespace %s", err)
@@ -133,12 +126,12 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 	}
 
 	// Switch to the docker-root user.
-	if err := system.Setuid(dockerRootUid); err != nil {
+	if err := system.Setuid(container.DockerRootUid); err != nil {
 		return fmt.Errorf("setuid %s", err)
 	}
 
 	// Switch to the docker-root group.
-	if err := system.Setgid(dockerRootGid); err != nil {
+	if err := system.Setgid(container.DockerRootGid); err != nil {
 		return fmt.Errorf("setgid %s", err)
 	}
 
@@ -155,7 +148,7 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 
 	// Prepare arguments for the raw syscalls.
 	var (
-		r1 uintptr
+		r1   uintptr
 		err1 syscall.Errno
 	)
 
@@ -175,7 +168,7 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 	}
 
 	syscall.ForkLock.Lock()
-	r1, _, err1 = syscall.RawSyscall6(syscall.SYS_CLONE, uintptr(syscall.CLONE_NEWUSER | syscall.CLONE_FILES | syscall.SIGCHLD), 0, 0, 0, 0, 0)
+	r1, _, err1 = syscall.RawSyscall6(syscall.SYS_CLONE, uintptr(syscall.CLONE_NEWUSER|syscall.CLONE_FILES|syscall.SIGCHLD), 0, 0, 0, 0, 0)
 	if err1 != 0 {
 		return fmt.Errorf("userns clone: %s", err)
 	}
@@ -188,8 +181,7 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 			return err
 		}
 
-		mappings := fmt.Sprintf("0 %v 1", dockerRootUid)
-		if err = writeUserMappings(int(r1), mappings); err != nil {
+		if err = writeUserMappings(int(r1), container.UidMappings, container.GidMappings); err != nil {
 			proc.Kill()
 			return fmt.Errorf("Failed to write mappings: %s", err)
 		}
@@ -213,14 +205,18 @@ func Init(container *libcontainer.Container, uncleanRootfs, consolePath string, 
 }
 
 // Write UID/GID mappings for a process.
-func writeUserMappings(pid int, mappings string) error {
-	for _, p := range []string{
-		fmt.Sprintf("/proc/%v/uid_map", pid),
-		fmt.Sprintf("/proc/%v/gid_map", pid),
-	} {
-		if err := ioutil.WriteFile(p, []byte(mappings), 0644); err != nil {
-			return err
-		}
+func writeUserMappings(pid int, uidMappings, gidMappings []string) error {
+	uidMap := []byte(strings.Join(uidMappings, "\n"))
+	gidMap := []byte(strings.Join(gidMappings, "\n"))
+
+	uidMappingsFile := fmt.Sprintf("/proc/%v/uid_map", pid)
+	gidMappingsFile := fmt.Sprintf("/proc/%v/gid_map", pid)
+
+	if err := ioutil.WriteFile(uidMappingsFile, uidMap, 0644); err != nil {
+		return err
+	}
+	if err := ioutil.WriteFile(gidMappingsFile, gidMap, 0644); err != nil {
+		return err
 	}
 	return nil
 }
