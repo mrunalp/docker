@@ -196,6 +196,7 @@ func (d *driver) setupCgroups(container *libcontainer.Config, c *execdriver.Comm
 		container.Cgroups.MemoryReservation = c.Resources.Memory
 		container.Cgroups.MemorySwap = c.Resources.MemorySwap
 		container.Cgroups.CpusetCpus = c.Resources.Cpuset
+		container.Cgroups.BlkioWriteBandwidth = c.Resources.BlkioWriteBandwidth
 	}
 
 	return nil

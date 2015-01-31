@@ -278,6 +278,7 @@ func populateCommand(c *Container, env []string) error {
 		Memory:     c.Config.Memory,
 		MemorySwap: c.Config.MemorySwap,
 		CpuShares:  c.Config.CpuShares,
+		BlkioWriteBandwidth:  c.Config.BlkioWriteBandwidth,
 		Cpuset:     c.Config.Cpuset,
 	}
 
