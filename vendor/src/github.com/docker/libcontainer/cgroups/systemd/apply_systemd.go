@@ -119,6 +119,11 @@ func Apply(c *cgroups.Cgroup, pid int) (map[string]string, error) {
 			newProp("CPUShares", uint64(c.CpuShares)))
 	}
 
+	if c.BlkioWriteBandwidth != "" {
+		properties = append(properties,
+			newProp("BlockIOWriteBandwidth", c.BlkioWriteBandwidth))
+	}
+
 	if _, err := theConn.StartTransientUnit(unitName, "replace", properties...); err != nil {
 		return nil, err
 	}
