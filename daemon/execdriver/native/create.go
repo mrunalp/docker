@@ -3,21 +3,24 @@
 package native
 
 import (
+	"errors"
 	"fmt"
-	"os/exec"
+	"net"
 	"path/filepath"
+	"strings"
+	"syscall"
 
 	"github.com/docker/docker/daemon/execdriver"
-	"github.com/docker/libcontainer"
+	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/libcontainer/apparmor"
+	"github.com/docker/libcontainer/configs"
 	"github.com/docker/libcontainer/devices"
-	"github.com/docker/libcontainer/mount"
-	"github.com/docker/libcontainer/security/capabilities"
+	"github.com/docker/libcontainer/utils"
 )
 
 // createContainer populates and configures the container type with the
 // data provided by the execdriver.Command
-func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, error) {
+func (d *driver) createContainer(c *execdriver.Command) (*configs.Config, error) {
 	container := execdriver.InitContainer(c)
 
 	if err := d.createIpc(container, c); err != nil {
@@ -33,6 +36,9 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 	}
 
 	if c.ProcessConfig.Privileged {
+		// clear readonly for /sys
+		container.Mounts[2].Flags &= ^syscall.MS_RDONLY
+		container.ReadonlyPaths = nil
 		if err := d.setPrivileged(container); err != nil {
 			return nil, err
 		}
@@ -58,40 +64,51 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 		return nil, err
 	}
 
-	cmds := make(map[string]*exec.Cmd)
-	d.Lock()
-	for k, v := range d.activeContainers {
-		cmds[k] = v.cmd
-	}
-	d.Unlock()
-
 	return container, nil
 }
 
-func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Command) error {
+func generateIfaceName() (string, error) {
+	for i := 0; i < 10; i++ {
+		name, err := utils.GenerateRandomName("veth", 7)
+		if err != nil {
+			continue
+		}
+		if _, err := net.InterfaceByName(name); err != nil {
+			if strings.Contains(err.Error(), "no such") {
+				return name, nil
+			}
+			return "", err
+		}
+	}
+	return "", errors.New("Failed to find name for new interface")
+}
+
+func (d *driver) createNetwork(container *configs.Config, c *execdriver.Command) error {
 	if c.Network.HostNetworking {
-		container.Namespaces.Remove(libcontainer.NEWNET)
+		container.Namespaces.Remove(configs.NEWNET)
 		return nil
 	}
 
-	container.Networks = []*libcontainer.Network{
+	container.Networks = []*configs.Network{
 		{
-			Mtu:     c.Network.Mtu,
-			Address: fmt.Sprintf("%s/%d", "127.0.0.1", 0),
-			Gateway: "localhost",
-			Type:    "loopback",
+			Type: "loopback",
 		},
 	}
 
+	iName, err := generateIfaceName()
+	if err != nil {
+		return err
+	}
 	if c.Network.Interface != nil {
-		vethNetwork := libcontainer.Network{
-			Mtu:        c.Network.Mtu,
-			Address:    fmt.Sprintf("%s/%d", c.Network.Interface.IPAddress, c.Network.Interface.IPPrefixLen),
-			MacAddress: c.Network.Interface.MacAddress,
-			Gateway:    c.Network.Interface.Gateway,
-			Type:       "veth",
-			Bridge:     c.Network.Interface.Bridge,
-			VethPrefix: "veth",
+		vethNetwork := configs.Network{
+			Name:              "eth0",
+			HostInterfaceName: iName,
+			Mtu:               c.Network.Mtu,
+			Address:           fmt.Sprintf("%s/%d", c.Network.Interface.IPAddress, c.Network.Interface.IPPrefixLen),
+			MacAddress:        c.Network.Interface.MacAddress,
+			Gateway:           c.Network.Interface.Gateway,
+			Type:              "veth",
+			Bridge:            c.Network.Interface.Bridge,
 		}
 		if c.Network.Interface.GlobalIPv6Address != "" {
 			vethNetwork.IPv6Address = fmt.Sprintf("%s/%d", c.Network.Interface.GlobalIPv6Address, c.Network.Interface.GlobalIPv6PrefixLen)
@@ -105,21 +122,24 @@ func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Com
 		active := d.activeContainers[c.Network.ContainerID]
 		d.Unlock()
 
-		if active == nil || active.cmd.Process == nil {
+		if active == nil {
 			return fmt.Errorf("%s is not a valid running container to join", c.Network.ContainerID)
 		}
-		cmd := active.cmd
 
-		nspath := filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "net")
-		container.Namespaces.Add(libcontainer.NEWNET, nspath)
+		state, err := active.State()
+		if err != nil {
+			return err
+		}
+
+		container.Namespaces.Add(configs.NEWNET, state.NamespacePaths[configs.NEWNET])
 	}
 
 	return nil
 }
 
-func (d *driver) createIpc(container *libcontainer.Config, c *execdriver.Command) error {
+func (d *driver) createIpc(container *configs.Config, c *execdriver.Command) error {
 	if c.Ipc.HostIpc {
-		container.Namespaces.Remove(libcontainer.NEWIPC)
+		container.Namespaces.Remove(configs.NEWIPC)
 		return nil
 	}
 
@@ -128,37 +148,38 @@ func (d *driver) createIpc(container *libcontainer.Config, c *execdriver.Command
 		active := d.activeContainers[c.Ipc.ContainerID]
 		d.Unlock()
 
-		if active == nil || active.cmd.Process == nil {
+		if active == nil {
 			return fmt.Errorf("%s is not a valid running container to join", c.Ipc.ContainerID)
 		}
-		cmd := active.cmd
 
-		container.Namespaces.Add(libcontainer.NEWIPC, filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "ipc"))
+		state, err := active.State()
+		if err != nil {
+			return err
+		}
+		container.Namespaces.Add(configs.NEWIPC, state.NamespacePaths[configs.NEWIPC])
 	}
 
 	return nil
 }
 
-func (d *driver) createPid(container *libcontainer.Config, c *execdriver.Command) error {
+func (d *driver) createPid(container *configs.Config, c *execdriver.Command) error {
 	if c.Pid.HostPid {
-		container.Namespaces.Remove(libcontainer.NEWPID)
+		container.Namespaces.Remove(configs.NEWPID)
 		return nil
 	}
 
 	return nil
 }
 
-func (d *driver) setPrivileged(container *libcontainer.Config) (err error) {
-	container.Capabilities = capabilities.GetAllCapabilities()
+func (d *driver) setPrivileged(container *configs.Config) (err error) {
+	container.Capabilities = execdriver.GetAllCapabilities()
 	container.Cgroups.AllowAllDevices = true
 
-	hostDeviceNodes, err := devices.GetHostDeviceNodes()
+	hostDevices, err := devices.HostDevices()
 	if err != nil {
 		return err
 	}
-	container.MountConfig.DeviceNodes = hostDeviceNodes
-
-	container.RestrictSys = false
+	container.Devices = hostDevices
 
 	if apparmor.IsEnabled() {
 		container.AppArmorProfile = "unconfined"
@@ -167,29 +188,50 @@ func (d *driver) setPrivileged(container *libcontainer.Config) (err error) {
 	return nil
 }
 
-func (d *driver) setCapabilities(container *libcontainer.Config, c *execdriver.Command) (err error) {
+func (d *driver) setCapabilities(container *configs.Config, c *execdriver.Command) (err error) {
 	container.Capabilities, err = execdriver.TweakCapabilities(container.Capabilities, c.CapAdd, c.CapDrop)
 	return err
 }
 
-func (d *driver) setupMounts(container *libcontainer.Config, c *execdriver.Command) error {
-	for _, m := range c.Mounts {
-		container.MountConfig.Mounts = append(container.MountConfig.Mounts, &mount.Mount{
-			Type:        "bind",
-			Source:      m.Source,
-			Destination: m.Destination,
-			Writable:    m.Writable,
-			Private:     m.Private,
-			Slave:       m.Slave,
-		})
+func (d *driver) setupCgroups(container *configs.Config, c *execdriver.Command) error {
+	if c.Resources != nil {
+		container.Cgroups.CpuShares = c.Resources.CpuShares
+		container.Cgroups.Memory = c.Resources.Memory
+		container.Cgroups.MemoryReservation = c.Resources.Memory
+		container.Cgroups.MemorySwap = c.Resources.MemorySwap
+		container.Cgroups.CpusetCpus = c.Resources.Cpuset
 	}
 
 	return nil
 }
 
-func (d *driver) setupLabels(container *libcontainer.Config, c *execdriver.Command) error {
+func (d *driver) setupMounts(container *configs.Config, c *execdriver.Command) error {
+	for _, m := range c.Mounts {
+		dest, err := symlink.FollowSymlinkInScope(filepath.Join(c.Rootfs, m.Destination), c.Rootfs)
+		if err != nil {
+			return err
+		}
+		flags := syscall.MS_BIND | syscall.MS_REC
+		if !m.Writable {
+			flags |= syscall.MS_RDONLY
+		}
+		if m.Slave {
+			flags |= syscall.MS_SLAVE
+		}
+
+		container.Mounts = append(container.Mounts, &configs.Mount{
+			Source:      m.Source,
+			Destination: dest,
+			Device:      "bind",
+			Flags:       flags,
+		})
+	}
+	return nil
+}
+
+func (d *driver) setupLabels(container *configs.Config, c *execdriver.Command) error {
 	container.ProcessLabel = c.ProcessLabel
-	container.MountConfig.MountLabel = c.MountLabel
+	container.MountLabel = c.MountLabel
 
 	return nil
 }

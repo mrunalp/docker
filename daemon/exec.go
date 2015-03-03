@@ -134,6 +134,7 @@ func (d *Daemon) ContainerExecCreate(job *engine.Job) engine.Status {
 
 	entrypoint, args := d.getEntrypointAndArgs(nil, config.Cmd)
 
+	log.Errorf("Entrypoint: %s, Args: %s", entrypoint, args)
 	processConfig := execdriver.ProcessConfig{
 		Tty:        config.Tty,
 		Entrypoint: entrypoint,

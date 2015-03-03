@@ -65,8 +65,9 @@ void nsexec()
 	const int num = sizeof(namespaces) / sizeof(char *);
 	jmp_buf env;
 	char buf[PATH_MAX], *val;
-	int i, tfd, child, len;
+	int i, tfd, child, len, consolefd = -1;
 	pid_t pid;
+	char *console;
 
 	val = getenv("_LIBCONTAINER_INITPID");
 	if (val == NULL)
@@ -77,6 +78,15 @@ void nsexec()
 	if (strcmp(val, buf)) {
 		pr_perror("Unable to parse _LIBCONTAINER_INITPID");
 		exit(1);
+	}
+
+	console = getenv("CONSOLE_PATH");
+	if (console != NULL) {
+		consolefd = open(console, O_RDWR);
+		if (consolefd < 0) {
+			pr_perror("Failed to open console %s", console);
+			exit(1);
+		}
 	}
 
 	/* Check that the specified process exists */
@@ -114,6 +124,20 @@ void nsexec()
 
 	if (setjmp(env) == 1) {
 		// Finish executing, let the Go runtime take over.
+		if (consolefd != -1) {
+			if (dup2(consolefd, STDIN_FILENO) != 0) {
+				pr_perror("Failed to dup 0");
+				exit(1);
+			}
+			if (dup2(consolefd, STDOUT_FILENO) != STDOUT_FILENO) {
+				pr_perror("Failed to dup 1");
+				exit(1);
+			}
+			if (dup2(consolefd, STDERR_FILENO) != STDERR_FILENO) {
+				pr_perror("Failed to dup 2\n");
+				exit(1);
+			}
+		}
 		return;
 	}
 
