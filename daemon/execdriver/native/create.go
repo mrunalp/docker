@@ -207,6 +207,13 @@ func (d *driver) setupCgroups(container *configs.Config, c *execdriver.Command) 
 
 func (d *driver) setupMounts(container *configs.Config, c *execdriver.Command) error {
 	for _, m := range c.Mounts {
+		if m.Destination == "/dev/shm" {
+			// Skip the default tmpfs mount for /dev/shm since user has provided a volume to be bind mounted there
+			container.Mounts = container.Mounts[1:]
+		}
+	}
+
+	for _, m := range c.Mounts {
 		dest, err := symlink.FollowSymlinkInScope(filepath.Join(c.Rootfs, m.Destination), c.Rootfs)
 		if err != nil {
 			return err
