@@ -165,3 +165,7 @@ func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.
 	}
 	return nil
 }
+
+func (daemon *Daemon) cleanupMounts() error {
+	return nil
+}
