@@ -88,6 +88,7 @@ func mountCmd(cmd configs.Command) error {
 }
 
 func mountToRootfs(m *configs.Mount, rootfs, mountLabel string) error {
+	fmt.Println("MOUNTING: %+v", m)
 	var (
 		dest = m.Destination
 		data = label.FormatMountLabel(m.Data, mountLabel)
@@ -132,7 +133,6 @@ func mountToRootfs(m *configs.Mount, rootfs, mountLabel string) error {
 		}
 		return syscall.Mount(m.Source, dest, m.Device, uintptr(m.Flags), data)
 	case "bind":
-		fmt.Println("Dan Bind Mount", m)
 		stat, err := os.Stat(m.Source)
 		if err != nil {
 			// error out if the source of a bind mount does not exist as we will be

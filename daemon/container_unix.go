@@ -219,6 +219,9 @@ func populateCommand(c *Container, env []string) error {
 			return err
 		}
 		ipc.ContainerID = ic.ID
+		c.ShmPath = ic.ShmPath
+		c.MqueuePath = ic.MqueuePath
+		logrus.Infof("IPC container shm: %+v", ic.ShmPath)
 	} else {
 		ipc.HostIpc = c.hostConfig.IpcMode.IsHost()
 		if ipc.HostIpc {
@@ -1163,7 +1166,7 @@ func (container *Container) setupIpcDirs() error {
 		return err
 	}
 
-	if err := syscall.Mount("tmpfs", shmPath, "tmpfs", uintptr(syscall.MS_NOEXEC|syscall.MS_NOSUID|syscall.MS_NODEV), label.FormatMountLabel("mode=1777,size=65536k", container.GetMountLabel())); err != nil {
+	if err := syscall.Mount("shm", shmPath, "tmpfs", uintptr(syscall.MS_NOEXEC|syscall.MS_NOSUID|syscall.MS_NODEV), label.FormatMountLabel("mode=1777,size=65536k", container.GetMountLabel())); err != nil {
 		return fmt.Errorf("mounting shm tmpfs: %s", err)
 	}
 
@@ -1182,26 +1185,29 @@ func (container *Container) setupIpcDirs() error {
 
 	return nil
 }
-func (container *Container) unmountIpcMounts() {
+func (container *Container) unmountIpcMounts() error {
+	if container.hostConfig.IpcMode.IsContainer() || container.hostConfig.IpcMode.IsHost() {
+		logrus.Infof("Skipping cleanup")
+		return nil
+	}
+
 	shmPath, err := container.shmPath()
 	if err != nil {
-		logrus.Errorf("%v: Shm Path does not exist: %v", container.ID, err)
-		return
+		return fmt.Errorf("shm path does not exist %v", err)
 	}
 
 	if err := syscall.Unmount(shmPath, syscall.MNT_DETACH); err != nil {
-		logrus.Errorf("%v: Failed to umount %s filesystem: %v", container.ID, shmPath, err)
-		return
+		return fmt.Errorf("failed to umount %s filesystem %v", shmPath, err)
 	}
 
 	mqueuePath, err := container.mqueuePath()
 	if err != nil {
-		logrus.Errorf("%v: Mqueue Path does not exist: %v", container.ID, err)
-		return
+		return fmt.Errorf("mqueue path does not exist %v", err)
 	}
 
 	if err := syscall.Unmount(mqueuePath, syscall.MNT_DETACH); err != nil {
-		logrus.Errorf("%v: Failed to umount %s filesystem: %v", container.ID, mqueuePath, err)
-		return
+		return fmt.Errorf("failed to umount %s filesystem %v", mqueuePath, err)
 	}
+
+	return nil
 }

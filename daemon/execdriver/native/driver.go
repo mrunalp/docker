@@ -116,6 +116,7 @@ func (d *driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, startCallba
 	if err != nil {
 		return execdriver.ExitStatus{ExitCode: -1}, err
 	}
+	logrus.Infof("CONTAINER: %+v", container.Mounts)
 
 	p := &libcontainer.Process{
 		Args: append([]string{c.ProcessConfig.Entrypoint}, c.ProcessConfig.Arguments...),

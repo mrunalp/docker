@@ -284,21 +284,16 @@ func (container *Container) Start() (err error) {
 		return err
 	}
 
-	defer func() {
-		// Now the container is running, unmount the ipc on the host
-		container.unmountIpcMounts()
-	}()
-
-	if err := container.setupIpcDirs(); err != nil {
-		return err
+	if !(container.hostConfig.IpcMode.IsContainer() || container.hostConfig.IpcMode.IsHost()) {
+		if err := container.setupIpcDirs(); err != nil {
+			return err
+		}
 	}
 
 	mounts, err := container.setupMounts()
 	if err != nil {
 		return err
 	}
-
-	fmt.Println(mounts)
 
 	container.command.Mounts = mounts
 	return container.waitForStart()
@@ -370,6 +365,10 @@ func (container *Container) cleanup() {
 	container.ReleaseNetwork()
 
 	disableAllActiveLinks(container)
+
+	if err := container.unmountIpcMounts(); err != nil {
+		logrus.Errorf("%v: Failed to umount ipc filesystems: %v", err)
+	}
 
 	if err := container.CleanupStorage(); err != nil {
 		logrus.Errorf("%v: Failed to cleanup storage: %v", container.ID, err)
