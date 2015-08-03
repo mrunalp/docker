@@ -209,3 +209,9 @@ func (container *Container) prepareMountPoints() error {
 func (container *Container) removeMountPoints() error {
 	return nil
 }
+
+func (container *Container) setupIpcDirs() error {
+}
+
+func (container *Container) unmountIpcMounts() {
+}
