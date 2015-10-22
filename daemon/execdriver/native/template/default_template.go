@@ -93,6 +93,5 @@ func New() *configs.Config {
 	if apparmor.IsEnabled() {
 		container.AppArmorProfile = "docker-default"
 	}
-
 	return container
 }
