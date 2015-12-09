@@ -37,7 +37,7 @@ func New() *configs.Config {
 			{Type: "NEWUSER"},
 		}),
 		Cgroups: &configs.Cgroup{
-			Parent:           "docker",
+			Parent:           "system.slice",
 			AllowAllDevices:  false,
 			MemorySwappiness: -1,
 		},

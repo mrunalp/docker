@@ -84,7 +84,7 @@ type Cgroup struct {
 	HugetlbLimit []*HugepageLimit `json:"hugetlb_limit"`
 
 	// Parent slice to use for systemd TODO: remove in favor or parent
-	Slice string `json:"slice"`
+	ScopePrefix string `json:"scope_prefix"`
 
 	// Whether to disable OOM Killer
 	OomKillDisable bool `json:"oom_kill_disable"`
