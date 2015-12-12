@@ -163,14 +163,15 @@ func (p *setnsProcess) setExternalDescriptors(newFds []string) {
 }
 
 type initProcess struct {
-	cmd        *exec.Cmd
-	parentPipe *os.File
-	childPipe  *os.File
-	config     *initConfig
-	manager    cgroups.Manager
-	container  *linuxContainer
-	fds        []string
-	process    *Process
+	cmd         *exec.Cmd
+	parentPipe  *os.File
+	childPipe   *os.File
+	config      *initConfig
+	manager     cgroups.Manager
+	cgroupPaths map[string]string
+	container   *linuxContainer
+	fds         []string
+	process     *Process
 }
 
 func (p *initProcess) pid() int {
@@ -201,8 +202,11 @@ func (p *initProcess) start() (err error) {
 
 	// Do this before syncing with child so that no children
 	// can escape the cgroup
-	if err := p.manager.Apply(p.pid()); err != nil {
-		return newSystemError(err)
+	if p.cgroupPaths != nil {
+	} else {
+		if err := p.manager.Apply(p.pid()); err != nil {
+			return newSystemError(err)
+		}
 	}
 	defer func() {
 		if err != nil {

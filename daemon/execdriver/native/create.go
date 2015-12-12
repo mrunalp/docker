@@ -165,6 +165,12 @@ func (d *Driver) createNetwork(container *configs.Config, c *execdriver.Command,
 	return nil
 }
 
+func (d *Driver) createCgroups(container *configs.Config, c *execdriver.Command) error {
+	if err := execdriver.SetupCgroups(container, c); err != nil {
+		return nil, err
+	}
+}
+
 func (d *Driver) createIpc(container *configs.Config, c *execdriver.Command) error {
 	if c.Ipc.HostIpc {
 		container.Namespaces.Remove(configs.NEWIPC)

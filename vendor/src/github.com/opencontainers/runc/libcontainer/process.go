@@ -48,6 +48,9 @@ type Process struct {
 	// All capabilities not specified will be dropped from the processes capability mask
 	Capabilities []string
 
+	// CgroupPaths specifies the paths for the cgroups subsystems that the process should join
+	CgroupsPath map[string]string
+
 	ops processOperations
 }
 

@@ -276,6 +276,10 @@ func (c *linuxContainer) newInitProcess(p *Process, cmd *exec.Cmd, parentPipe, c
 	}, nil
 }
 
+func (c *linuxContainer) GetCgroupPaths() (cgroupPaths map[string]string) {
+	return c.cgroupManager.GetPaths()
+}
+
 func (c *linuxContainer) newSetnsProcess(p *Process, cmd *exec.Cmd, parentPipe, childPipe *os.File) (*setnsProcess, error) {
 	cmd.Env = append(cmd.Env, "_LIBCONTAINER_INITTYPE=setns")
 	// for setns process, we dont have to set cloneflags as the process namespaces
