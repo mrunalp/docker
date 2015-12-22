@@ -106,6 +106,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		flNetMode           = cmd.String([]string{"-net"}, "default", "Set the Network for the container")
 		flMacAddress        = cmd.String([]string{"-mac-address"}, "", "Container MAC address (e.g. 92:d0:c6:0a:29:33)")
 		flIpcMode           = cmd.String([]string{"-ipc"}, "", "IPC namespace to use")
+		flCgroup            = cmd.String([]string{"-cgroup"}, "", "specifies which cgroup to use")
 		flRestartPolicy     = cmd.String([]string{"-restart"}, "no", "Restart policy to apply when a container exits")
 		flReadonlyRootfs    = cmd.Bool([]string{"-read-only"}, false, "Mount the container's root filesystem as read only")
 		flLoggingDriver     = cmd.String([]string{"-log-driver"}, "", "Logging driver for container")
@@ -336,6 +337,11 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		return nil, nil, cmd, fmt.Errorf("--uts: invalid UTS mode")
 	}
 
+	cgroupSpec := CgroupSpec(*flCgroup)
+	if !cgroupSpec.Valid() {
+		return nil, nil, cmd, fmt.Errorf("--cgroup: invalid cgroup")
+	}
+
 	restartPolicy, err := ParseRestartPolicy(*flRestartPolicy)
 	if err != nil {
 		return nil, nil, cmd, err
@@ -416,6 +422,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		IpcMode:        ipcMode,
 		PidMode:        pidMode,
 		UTSMode:        utsMode,
+		Cgroup:         cgroupSpec,
 		CapAdd:         stringutils.NewStrSlice(flCapAdd.GetAll()...),
 		CapDrop:        stringutils.NewStrSlice(flCapDrop.GetAll()...),
 		GroupAdd:       flGroupAdd.GetAll(),

@@ -167,6 +167,11 @@ func (m *Manager) Apply(pid int) error {
 		properties []systemdDbus.Property
 	)
 
+	if c.Paths != nil {
+		m.Paths = c.Paths
+		return cgroups.EnterPid(m.Paths, pid)
+	}
+
 	if c.Parent != "" {
 		slice = c.Parent
 	}
@@ -303,6 +308,13 @@ func (m *Manager) GetPaths() map[string]string {
 	paths := m.Paths
 	m.mu.Unlock()
 	return paths
+}
+
+func (m *Manager) SetPaths(paths map[string]string) error {
+	m.mu.Lock()
+	m.Paths = paths
+	m.mu.Unlock()
+	return nil
 }
 
 func writeFile(dir, file, data string) error {

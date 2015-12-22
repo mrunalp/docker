@@ -101,11 +101,17 @@ type cgroupData struct {
 }
 
 func (m *Manager) Apply(pid int) (err error) {
+
 	if m.Cgroups == nil {
 		return nil
 	}
 
 	var c = m.Cgroups
+
+	if c.Paths != nil {
+		m.Paths = c.Paths
+		return cgroups.EnterPid(m.Paths, pid)
+	}
 
 	d, err := getCgroupData(m.Cgroups, pid)
 	if err != nil {
@@ -160,6 +166,13 @@ func (m *Manager) GetPaths() map[string]string {
 	paths := m.Paths
 	m.mu.Unlock()
 	return paths
+}
+
+func (m *Manager) SetPaths(paths map[string]string) error {
+	m.mu.Lock()
+	m.Paths = paths
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) GetStats() (*cgroups.Stats, error) {
