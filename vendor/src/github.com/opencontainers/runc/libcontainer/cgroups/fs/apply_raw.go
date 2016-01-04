@@ -152,6 +152,9 @@ func (m *Manager) Apply(pid int) (err error) {
 }
 
 func (m *Manager) Destroy() error {
+	if m.Cgroups.Paths != nil {
+		return nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := cgroups.RemovePaths(m.Paths); err != nil {

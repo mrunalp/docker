@@ -172,8 +172,12 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 	if err := cont.Start(p); err != nil {
 		return execdriver.ExitStatus{ExitCode: -1}, err
 	}
+	logrus.Infof("DRIVER: Started the process in the container")
 
-	oom := notifyOnOOM(cont)
+	var oom <-chan struct{}
+	if container.Cgroups.Paths == nil {
+		oom = notifyOnOOM(cont)
+	}
 	if hooks.Start != nil {
 		pid, err := p.Pid()
 		if err != nil {
@@ -181,7 +185,15 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 			p.Wait()
 			return execdriver.ExitStatus{ExitCode: -1}, err
 		}
-		hooks.Start(&c.ProcessConfig, pid, oom)
+		// A closed channel for OOM is returned here as it will be
+		// non-blocking and return the correct result when read.
+		if container.Cgroups.Paths != nil {
+			chOOM := make(chan struct{})
+			close(chOOM)
+			hooks.Start(&c.ProcessConfig, pid, chOOM)
+		} else {
+			hooks.Start(&c.ProcessConfig, pid, oom)
+		}
 	}
 
 	waitF := p.Wait
@@ -190,6 +202,7 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 		// because cmd.Wait() waiting for all streams to be copied
 		waitF = waitInPIDHost(p, cont)
 	}
+	logrus.Infof("DRIVER: Waiting for process to exit")
 	ps, err := waitF()
 	if err != nil {
 		execErr, ok := err.(*exec.ExitError)
@@ -198,9 +211,14 @@ func (d *Driver) Run(c *execdriver.Command, pipes *execdriver.Pipes, hooks execd
 		}
 		ps = execErr.ProcessState
 	}
+	logrus.Infof("DRIVER: Waiting for process to destroy")
 	cont.Destroy()
 	destroyed = true
-	_, oomKill := <-oom
+	oomKill := false
+	if container.Cgroups.Paths == nil {
+		_, oomKill = <-oom
+	}
+	logrus.Infof("DRIVER: done")
 	return execdriver.ExitStatus{ExitCode: utils.ExitStatus(ps.Sys().(syscall.WaitStatus)), OOMKilled: oomKill}, nil
 }
 

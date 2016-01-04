@@ -293,6 +293,9 @@ func (m *Manager) Apply(pid int) error {
 }
 
 func (m *Manager) Destroy() error {
+	if m.Cgroups.Paths != nil {
+		return nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	theConn.StopUnit(getUnitName(m.Cgroups), "replace", nil)
