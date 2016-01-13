@@ -146,6 +146,15 @@ func (daemon *Daemon) containerStart(container *container.Container) (err error)
 	mounts = append(mounts, container.TmpfsMounts()...)
 
 	container.Command.Mounts = mounts
+
+	jsonPath, err := container.ConfigPath()
+	if err != nil {
+		return err
+	}
+	container.Command.ContainerJSONPath = jsonPath
+
+	// don't lock waitForStart because it has potential risk of blocking
+	// which will lead to dead lock, forever.
 	if err := daemon.waitForStart(container); err != nil {
 		return err
 	}
