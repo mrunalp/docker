@@ -66,7 +66,7 @@ func TotalHooks() int {
 
 func getHooks() ([]os.FileInfo, string, error) {
 
-	hookDirPath := "/usr/lib/docker/hooks.d"
+	hookDirPath := "/usr/libexec/oci/hooks.d"
 	// find any hooks executables
 	if _, err := os.Stat(hookDirPath); os.IsNotExist(err) {
 		return nil, "", nil
