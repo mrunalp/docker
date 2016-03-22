@@ -5,6 +5,7 @@ package fs
 import (
 	"bufio"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -48,10 +49,38 @@ func (s *MemoryGroup) Apply(d *data) (err error) {
 	return nil
 }
 
+func getExistingValues(path string) ([]string, error) {
+	cgroupValue, err := ioutil.ReadFile(filepath.Join(path, "memory.limit_in_bytes"))
+	if err != nil {
+		return nil, err
+	}
+	var dStr []string
+	dStr = append(dStr, string(cgroupValue))
+	cgroupValue, err = ioutil.ReadFile(filepath.Join(path, "memory.memsw.limit_in_bytes"))
+	if err != nil {
+		return nil, err
+	}
+	dStr = append(dStr, string(cgroupValue))
+	cgroupValue, err = ioutil.ReadFile(filepath.Join(path, "memory.soft_limit_in_bytes"))
+	if err != nil {
+		return nil, err
+	}
+	dStr = append(dStr, string(cgroupValue))
+	return dStr, nil
+}
+
 func (s *MemoryGroup) Set(path string, cgroup *configs.Cgroup) error {
+	before, err := getExistingValues(path)
+	if err != nil {
+		return fmt.Errorf("Failed to get before values: %v", err)
+	}
 	if cgroup.Memory != 0 {
 		if err := writeFile(path, "memory.limit_in_bytes", strconv.FormatInt(cgroup.Memory, 10)); err != nil {
-			return err
+			after, err := getExistingValues(path)
+			if err != nil {
+				return fmt.Errorf("Failed to get after values: %v", err)
+			}
+			return fmt.Errorf("Failed to set cgroups: %v BEFORE: %v AFTER: %v", err, before, after)
 		}
 	}
 	if cgroup.MemoryReservation != 0 {
