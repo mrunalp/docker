@@ -48,10 +48,17 @@ func (daemon *Daemon) containerCreate(params types.ContainerCreateConfig, manage
 	if params.HostConfig == nil {
 		params.HostConfig = &containertypes.HostConfig{}
 	}
+
 	err = daemon.adaptContainerSettings(params.HostConfig, params.AdjustCPUShares)
 	if err != nil {
 		return types.ContainerCreateResponse{Warnings: warnings}, err
 	}
+
+	opts, err := daemon.generateSecurityOpt(params.HostConfig)
+	if err != nil {
+		return types.ContainerCreateResponse{Warnings: warnings}, err
+	}
+	params.HostConfig.SecurityOpt = append(params.HostConfig.SecurityOpt, opts...)
 
 	container, err := daemon.create(params, managed)
 	if err != nil {
@@ -150,15 +157,15 @@ func (daemon *Daemon) create(params types.ContainerCreateConfig, managed bool) (
 	return container, nil
 }
 
-func (daemon *Daemon) generateSecurityOpt(ipcMode containertypes.IpcMode, pidMode containertypes.PidMode, privileged bool) ([]string, error) {
-	if ipcMode.IsHost() || pidMode.IsHost() || privileged {
+func (daemon *Daemon) generateSecurityOpt(hostConfig *containertypes.HostConfig) ([]string, error) {
+	if hostConfig.IpcMode.IsHost() || hostConfig.PidMode.IsHost() || hostConfig.Privileged {
 		return label.DisableSecOpt(), nil
 	}
 
 	var ipcLabel []string
 	var pidLabel []string
-	ipcContainer := ipcMode.Container()
-	pidContainer := pidMode.Container()
+	ipcContainer := hostConfig.IpcMode.Container()
+	pidContainer := hostConfig.PidMode.Container()
 	if ipcContainer != "" {
 		c, err := daemon.GetContainer(ipcContainer)
 		if err != nil {

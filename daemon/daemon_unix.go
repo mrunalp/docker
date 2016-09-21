@@ -235,13 +235,6 @@ func (daemon *Daemon) adaptContainerSettings(hostConfig *containertypes.HostConf
 	if hostConfig.ShmSize == 0 {
 		hostConfig.ShmSize = container.DefaultSHMSize
 	}
-	var err error
-	if hostConfig.SecurityOpt == nil {
-		hostConfig.SecurityOpt, err = daemon.generateSecurityOpt(hostConfig.IpcMode, hostConfig.PidMode, hostConfig.Privileged)
-		if err != nil {
-			return err
-		}
-	}
 	if hostConfig.MemorySwappiness == nil {
 		defaultSwappiness := int64(-1)
 		hostConfig.MemorySwappiness = &defaultSwappiness
